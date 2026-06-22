@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+*.spec
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# ML artifacts
+models/*.pt
+models/*.pth
+models/*.pkl
+models/*.onnx
+mlruns/
+mlartifacts/
+
+# Data (large files excluded, .gitkeep tracks empty dirs)
+data/gestures/*
+!data/gestures/.gitkeep
+data/test_baseline/*
+!data/test_baseline/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PyInstaller output
+dist/
+*.spec
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
