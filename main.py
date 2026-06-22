@@ -15,8 +15,10 @@ import win32api
 import win32con
 import win32gui
 
+from src.bootstrap_classifier import BootstrapClassifier
 from src.capture import CaptureThread
 from src.config_loader import load_config
+from src.constants import GestureLabel
 from src.dispatcher import DispatcherThread
 from src.inference import InferenceThread
 from src.particles import ParticleSystem
@@ -114,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     dispatcher = DispatcherThread(actions_queue)
 
+    # Wire bootstrap classifier (swapped for trained MLP in Phase E via config)
+    if config.get("classifier", "bootstrap") == "bootstrap":
+        inference.set_classifier(BootstrapClassifier())
+
     for t in (capture, inference, dispatcher):
         t.start()
 
@@ -141,6 +147,16 @@ def main(argv: list[str] | None = None) -> int:
         screen.fill((0, 0, 0))
 
         landmarks = inference.get_landmarks()
+        gesture = inference.get_gesture()
+
+        # OPEN_PALM is a continuous hold gesture — spawn particles at fingertips
+        # every frame rather than from a queue event (would flood at 30fps)
+        if gesture and gesture[0] == GestureLabel.OPEN_PALM and landmarks:
+            for hand in landmarks:
+                for tip_idx in FINGERTIP_INDICES:
+                    px = hand[tip_idx].x * screen_w
+                    py = hand[tip_idx].y * screen_h
+                    particles.spawn_at(px, py, count=3)
 
         if capture.reconnect_event.is_set():
             _draw_reconnect_banner(screen, font, screen_w, screen_h)

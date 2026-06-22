@@ -46,11 +46,16 @@ Webcam live, overlay renders, PyInstaller bundleable.
 
 Particle effects on fingertips via MediaPipe's built-in gesture recognizer.
 
-- [ ] Wire `mediapipe.tasks.vision.GestureRecognizer` as a `GestureClassifier` implementation (the bootstrap)
-- [ ] Implement `extract_static()` in `src/feature_extractor.py` (63-dim, wrist-origin, MCP-scale)
-- [ ] Fire particles spawn at fingertip positions on `open_palm` detection (manually wired)
-- [ ] Particles are placeholder (solid-color dots) — full particle engine is Phase C
+- [x] Implement `BootstrapClassifier` in `src/bootstrap_classifier.py` (rule-based geometry, no training)
+- [x] Implement `extract_static()` in `src/feature_extractor.py` (63-dim, wrist-origin, MCP-scale)
+- [x] Rewrite `InferenceThread` with classifier integration: `set_classifier()`, `get_gesture()`, `_run_classifier()`
+- [x] Wire `BootstrapClassifier` into `main.py` render loop via `inference.set_classifier()`
+- [x] Particle spawn at fingertip positions on `OPEN_PALM` detection (5 fingertips × 3 particles/frame)
+- [x] Particles are placeholder (solid-color dots) — full particle engine is Phase C
+- [x] Write `scripts/collect_baseline.py` — OpenCV UI for 50-sample reservation set collection
+- [x] Write `tests/test_bootstrap_classifier.py` — unit tests for all rule branches + edge cases + protocol compliance
 - [ ] **Collect 50-sample reservation set** (5-6 samples per static gesture class, one quick session)
+  - Run: `python scripts/collect_baseline.py`
   - Save to `data/test_baseline/{gesture}/{timestamp}.npy` — NEVER used for training
   - Log bootstrap accuracy on this set now; use this same set for trained model comparison in Phase E/F
   - This baseline populates the "MediaPipe built-in" column in the final benchmark table
