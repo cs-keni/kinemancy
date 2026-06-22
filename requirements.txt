@@ -1,5 +1,6 @@
 # Core runtime
-mediapipe>=0.10.14
+mediapipe>=0.10.14,<0.11.0
+protobuf>=4.25.3,<5.0.0
 opencv-python>=4.9.0
 pygame>=2.5.2
 pywin32>=306; sys_platform == "win32"
