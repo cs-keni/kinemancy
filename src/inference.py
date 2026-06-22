@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import cv2
 import mediapipe as mp
+from mediapipe.python.solutions import hands as _mp_hands
 
 from src.constants import GestureEvent, GestureLabel, STATIC_GESTURES
 from src.feature_extractor import Landmark, extract_static
@@ -60,7 +61,7 @@ class InferenceThread(threading.Thread):
             maxlen=WINDOW
         )
 
-        self._hands = mp.solutions.hands.Hands(
+        self._hands = _mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=2,
             min_detection_confidence=0.7,
@@ -172,7 +173,7 @@ class InferenceThread(threading.Thread):
     # ------------------------------------------------------------------ helpers
 
     def _parse_result(
-        self, result: mp.solutions.hands.Hands
+        self, result
     ) -> list[list[Landmark]] | None:
         if not result.multi_hand_landmarks:
             return None
