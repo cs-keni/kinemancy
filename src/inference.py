@@ -1,6 +1,8 @@
 """Thread 2 (daemon): MediaPipe Hands inference + gesture classification.
 
-Reads frames from CaptureThread.frame_buffer, runs MediaPipe Hands,
+Uses MediaPipe Tasks API (HandLandmarker) — mp.solutions was removed in 0.10.14+.
+
+Reads frames from CaptureThread.frame_buffer, runs HandLandmarker in VIDEO mode,
 runs the active GestureClassifier, and exposes results thread-safely.
 
 Phase B: classify every frame, expose get_gesture(), emit GestureEvents
@@ -12,14 +14,17 @@ Camera reconnect: reconnect_event set → flush both deques, clear landmarks.
 from __future__ import annotations
 
 import collections
+import os
 import queue
 import threading
 import time
+import urllib.request
 from typing import TYPE_CHECKING
 
 import cv2
 import mediapipe as mp
-from mediapipe.python.solutions import hands as _mp_hands
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision as mp_vision
 
 from src.constants import GestureEvent, GestureLabel, STATIC_GESTURES
 from src.feature_extractor import Landmark, extract_static
@@ -30,6 +35,24 @@ if TYPE_CHECKING:
 WINDOW = 30       # LSTM sliding-window length (Phase F)
 _MIN_CONF = 0.70  # minimum classifier confidence to emit a GestureEvent
 
+_MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
+_MODEL_PATH = os.path.join(_MODEL_DIR, 'hand_landmarker.task')
+_MODEL_URL = (
+    'https://storage.googleapis.com/mediapipe-models/'
+    'hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+)
+
+
+def _ensure_model() -> str:
+    """Download hand_landmarker.task if not already present (~8 MB)."""
+    path = os.path.abspath(_MODEL_PATH)
+    if not os.path.exists(path):
+        os.makedirs(os.path.abspath(_MODEL_DIR), exist_ok=True)
+        print('[inference] Downloading hand_landmarker.task (~8 MB)…', flush=True)
+        urllib.request.urlretrieve(_MODEL_URL, path)
+        print('[inference] Model ready.', flush=True)
+    return path
+
 
 class InferenceThread(threading.Thread):
     def __init__(
@@ -39,7 +62,7 @@ class InferenceThread(threading.Thread):
         effects_queue: queue.Queue,
         actions_queue: queue.Queue,
     ) -> None:
-        super().__init__(daemon=True, name="kinemancy-inference")
+        super().__init__(daemon=True, name='kinemancy-inference')
         self.frame_buffer = frame_buffer
         self.reconnect_event = reconnect_event
         self.effects_queue = effects_queue
@@ -50,23 +73,25 @@ class InferenceThread(threading.Thread):
         self._lock = threading.Lock()
         self._stop = threading.Event()
 
-        # Active classifier — set via set_classifier() before or after start()
         self._classifier: GestureClassifier | None = None
 
         # 30-frame sliding windows for Phase F LSTM inference
-        self.left_deque: collections.deque[list[Landmark] | None] = collections.deque(
-            maxlen=WINDOW
-        )
-        self.right_deque: collections.deque[list[Landmark] | None] = collections.deque(
-            maxlen=WINDOW
-        )
+        self.left_deque: collections.deque[list[Landmark] | None] = collections.deque(maxlen=WINDOW)
+        self.right_deque: collections.deque[list[Landmark] | None] = collections.deque(maxlen=WINDOW)
 
-        self._hands = _mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.7,
+        # VIDEO mode requires strictly monotonic timestamps (ms)
+        self._last_ts_ms: int = 0
+
+        model_path = _ensure_model()
+        options = mp_vision.HandLandmarkerOptions(
+            base_options=mp_tasks.BaseOptions(model_asset_path=model_path),
+            running_mode=mp_vision.RunningMode.VIDEO,
+            num_hands=2,
+            min_hand_detection_confidence=0.7,
+            min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
+        self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
 
     # ------------------------------------------------------------------ public
 
@@ -105,15 +130,18 @@ class InferenceThread(threading.Thread):
                 frame = self.frame_buffer[-1]
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+                # VIDEO mode: timestamps must be strictly monotonically increasing
+                ts_ms = max(int(time.time() * 1000), self._last_ts_ms + 1)
+                self._last_ts_ms = ts_ms
+
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 try:
-                    result = self._hands.process(rgb)
+                    result = self._landmarker.detect_for_video(mp_image, ts_ms)
                 except Exception as exc:
-                    print(f"[inference] MediaPipe error: {exc}", flush=True)
+                    print(f'[inference] HandLandmarker error: {exc}', flush=True)
                     continue
 
                 landmarks_per_hand = self._parse_result(result)
-
-                # Update LSTM deques before acquiring the lock
                 left_lms, right_lms = self._split_hands(result)
                 self.left_deque.append(left_lms)
                 self.right_deque.append(right_lms)
@@ -128,7 +156,7 @@ class InferenceThread(threading.Thread):
                     with self._lock:
                         self._gesture = None
         finally:
-            self._hands.close()
+            self._landmarker.close()
 
     def _run_classifier(
         self,
@@ -141,7 +169,7 @@ class InferenceThread(threading.Thread):
             try:
                 label, conf = clf.predict(features)
             except Exception as exc:
-                print(f"[inference] classifier error: {exc}", flush=True)
+                print(f'[inference] classifier error: {exc}', flush=True)
                 continue
 
             with self._lock:
@@ -150,9 +178,8 @@ class InferenceThread(threading.Thread):
             if conf < _MIN_CONF or label == GestureLabel.NONE:
                 continue
 
-            # Continuous hold gestures (OPEN_PALM, POINT, PINCH) are read
-            # directly by the main thread via get_gesture() — no per-frame event.
-            # Discrete trigger gestures (SNAP, CLAP, etc.) fire to both queues.
+            # Static hold gestures (OPEN_PALM, POINT, PINCH) → main thread polls
+            # get_gesture() each frame. Dynamic trigger gestures → both queues.
             if label not in STATIC_GESTURES:
                 event = GestureEvent(
                     label=label,
@@ -172,28 +199,26 @@ class InferenceThread(threading.Thread):
 
     # ------------------------------------------------------------------ helpers
 
-    def _parse_result(
-        self, result
-    ) -> list[list[Landmark]] | None:
-        if not result.multi_hand_landmarks:
+    def _parse_result(self, result) -> list[list[Landmark]] | None:
+        """Convert Tasks API result to list of 21-Landmark lists."""
+        if not result.hand_landmarks:
             return None
         return [
-            [Landmark(lm.x, lm.y, lm.z) for lm in hand_lms.landmark]
-            for hand_lms in result.multi_hand_landmarks
+            [Landmark(lm.x, lm.y, lm.z) for lm in hand_lms]
+            for hand_lms in result.hand_landmarks
         ]
 
     def _split_hands(
         self, result
     ) -> tuple[list[Landmark] | None, list[Landmark] | None]:
         """Return (left_lms, right_lms), None for each absent hand."""
-        if not result.multi_hand_landmarks or not result.multi_handedness:
+        if not result.hand_landmarks or not result.handedness:
             return None, None
         left = right = None
-        for hand_lms, handedness in zip(
-            result.multi_hand_landmarks, result.multi_handedness
-        ):
-            lms = [Landmark(lm.x, lm.y, lm.z) for lm in hand_lms.landmark]
-            if handedness.classification[0].label == "Left":
+        for hand_lms, handedness_list in zip(result.hand_landmarks, result.handedness):
+            lms = [Landmark(lm.x, lm.y, lm.z) for lm in hand_lms]
+            # Tasks API: category_name is 'Left' or 'Right'
+            if handedness_list[0].category_name == 'Left':
                 left = lms
             else:
                 right = lms
@@ -201,4 +226,4 @@ class InferenceThread(threading.Thread):
 
     def stop(self) -> None:
         self._stop.set()
-        # _hands.close() called in run()'s finally block after loop exits cleanly
+        # _landmarker.close() called in run()'s finally block

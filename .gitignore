@@ -27,6 +27,7 @@ models/*.pt
 models/*.pth
 models/*.pkl
 models/*.onnx
+models/*.task
 mlruns/
 mlartifacts/
 

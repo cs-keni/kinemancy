@@ -108,6 +108,19 @@ PHASES.md          Phase B tasks marked complete
 ### Key design decision
 Static gestures (OPEN_PALM) spawn particles via main thread polling `get_gesture()`, NOT via the effects_queue. At 30fps inference, queueing every OPEN_PALM frame would emit ~30 events/second, flooding the queue and causing stutter. The queue is reserved for discrete one-shot trigger gestures (SNAP, CLAP, etc.) in later phases.
 
+### Architecture change: mp.solutions → Tasks API
+MediaPipe 0.10.14+ removed the legacy `mp.solutions` Python namespace entirely.
+Rewrote `InferenceThread` to use `mediapipe.tasks.python.vision.HandLandmarker`
+(VIDEO mode, monotonic timestamps). Auto-downloads `hand_landmarker.task` (~8MB)
+to `models/` on first run via `_ensure_model()`. Public API unchanged.
+
+Key API differences vs legacy:
+- Input: `mp.Image(SRGB, data=rgb_array)` + monotonic `timestamp_ms`
+- Call: `landmarker.detect_for_video(mp_image, ts_ms)` instead of `hands.process(rgb)`
+- Landmarks: `result.hand_landmarks[i][j].x/y/z` instead of `result.multi_hand_landmarks[i].landmark[j].x/y/z`
+- Handedness: `result.handedness[i][0].category_name` instead of `result.multi_handedness[i].classification[0].label`
+- Cleanup: `landmarker.close()` in `finally` (same pattern as before)
+
 ### Test count
 Phase B adds `tests/test_bootstrap_classifier.py` with tests covering:
 - All 7 classified gesture branches (OPEN_PALM, FIST, POINT, PEACE, ROCK, THUMBS_UP, PINCH)
