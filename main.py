@@ -126,58 +126,61 @@ def main(argv: list[str] | None = None) -> int:
     fps_target: int = config["overlay"]["fps_target"]
     running = True
 
-    while running:
-        t0 = time.perf_counter() if args.debug else 0.0
+    try:
+        while running:
+            t0 = time.perf_counter() if args.debug else 0.0
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    running = False
 
-        # Drain gesture events → particle triggers (non-blocking)
-        while True:
-            try:
-                gesture_event = effects_queue.get_nowait()
-                particles.trigger(gesture_event)
-            except queue.Empty:
-                break
+            # Drain gesture events → particle triggers (non-blocking)
+            while True:
+                try:
+                    gesture_event = effects_queue.get_nowait()
+                    particles.trigger(gesture_event)
+                except queue.Empty:
+                    break
 
-        # Black fill = transparent (LWA_COLORKEY)
-        screen.fill((0, 0, 0))
+            # Black fill = transparent (LWA_COLORKEY)
+            screen.fill((0, 0, 0))
 
-        landmarks = inference.get_landmarks()
-        gesture = inference.get_gesture()
+            landmarks = inference.get_landmarks()
+            gesture = inference.get_gesture()
 
-        # OPEN_PALM is a continuous hold gesture — spawn particles at fingertips
-        # every frame rather than from a queue event (would flood at 30fps)
-        if gesture and gesture[0] == GestureLabel.OPEN_PALM and landmarks:
-            for hand in landmarks:
-                for tip_idx in FINGERTIP_INDICES:
-                    px = hand[tip_idx].x * screen_w
-                    py = hand[tip_idx].y * screen_h
-                    particles.spawn_at(px, py, count=3)
+            # OPEN_PALM is a continuous hold gesture — spawn particles at fingertips
+            # every frame rather than from a queue event (would flood at 30fps)
+            if gesture and gesture[0] == GestureLabel.OPEN_PALM and landmarks:
+                for hand in landmarks:
+                    for tip_idx in FINGERTIP_INDICES:
+                        px = hand[tip_idx].x * screen_w
+                        py = hand[tip_idx].y * screen_h
+                        particles.spawn_at(px, py, count=3)
 
-        if capture.reconnect_event.is_set():
-            _draw_reconnect_banner(screen, font, screen_w, screen_h)
-        elif landmarks:
-            _draw_landmarks(screen, landmarks, screen_w, screen_h)
+            if capture.reconnect_event.is_set():
+                _draw_reconnect_banner(screen, font, screen_w, screen_h)
+            elif landmarks:
+                _draw_landmarks(screen, landmarks, screen_w, screen_h)
 
-        particles.update()
-        particles.render(screen)
+            particles.update()
+            particles.render(screen)
 
-        if args.debug:
-            fps = clock.get_fps()
-            dt_ms = (time.perf_counter() - t0) * 1000
-            print(f"[frame] render={dt_ms:.1f}ms  fps={fps:.0f}", file=sys.stderr)
-            _draw_debug_hud(screen, font, fps, dt_ms)
+            if args.debug:
+                fps = clock.get_fps()
+                dt_ms = (time.perf_counter() - t0) * 1000
+                print(f"[frame] render={dt_ms:.1f}ms  fps={fps:.0f}", file=sys.stderr)
+                _draw_debug_hud(screen, font, fps, dt_ms)
 
-        pygame.display.flip()
-        clock.tick(fps_target)
-
-    for t in (capture, inference, dispatcher):
-        t.stop()
-    pygame.quit()
+            pygame.display.flip()
+            clock.tick(fps_target)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for t in (capture, inference, dispatcher):
+            t.stop()
+        pygame.quit()
     return 0
 
 

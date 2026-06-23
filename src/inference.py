@@ -138,7 +138,8 @@ class InferenceThread(threading.Thread):
                 try:
                     result = self._landmarker.detect_for_video(mp_image, ts_ms)
                 except Exception as exc:
-                    print(f'[inference] HandLandmarker error: {exc}', flush=True)
+                    if not self._stop.is_set():
+                        print(f'[inference] HandLandmarker error: {exc}', flush=True)
                     continue
 
                 landmarks_per_hand = self._parse_result(result)
