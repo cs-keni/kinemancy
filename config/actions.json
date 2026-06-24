@@ -25,7 +25,8 @@
     "thrust":      1500,
     "clap":        1000
   },
-  "classifier": "bootstrap",
+  "classifier": "trained",
+  "dynamic_classifier": "trained",
   "particle_mode": "fire",
   "overlay": {
     "fps_target": 60,

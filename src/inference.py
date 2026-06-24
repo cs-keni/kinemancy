@@ -74,6 +74,7 @@ class InferenceThread(threading.Thread):
         self._stop = threading.Event()
 
         self._classifier: GestureClassifier | None = None
+        self._dynamic_clf = None   # TrainedDynamicClassifier | None (avoid circular import)
 
         # 30-frame sliding windows for Phase F LSTM inference
         self.left_deque: collections.deque[list[Landmark] | None] = collections.deque(maxlen=WINDOW)
@@ -96,9 +97,14 @@ class InferenceThread(threading.Thread):
     # ------------------------------------------------------------------ public
 
     def set_classifier(self, clf: GestureClassifier) -> None:
-        """Hot-swap the active classifier (thread-safe)."""
+        """Hot-swap the active static classifier (thread-safe)."""
         with self._lock:
             self._classifier = clf
+
+    def set_dynamic_classifier(self, clf) -> None:
+        """Hot-swap the active dynamic (LSTM) classifier (thread-safe)."""
+        with self._lock:
+            self._dynamic_clf = clf
 
     def get_landmarks(self) -> list[list[Landmark]] | None:
         with self._lock:
@@ -151,11 +157,18 @@ class InferenceThread(threading.Thread):
                     self._landmarks = landmarks_per_hand if landmarks_per_hand else None
                     clf = self._classifier
 
+                with self._lock:
+                    dynamic_clf = self._dynamic_clf
+
                 if clf and landmarks_per_hand:
                     self._run_classifier(clf, landmarks_per_hand)
                 elif not landmarks_per_hand:
                     with self._lock:
                         self._gesture = None
+
+                # Phase F: LSTM inference on the 30-frame sliding window
+                if dynamic_clf and len(self.left_deque) >= WINDOW:
+                    self._run_dynamic_classifier(dynamic_clf)
         finally:
             self._landmarker.close()
 
@@ -224,6 +237,39 @@ class InferenceThread(threading.Thread):
             else:
                 right = lms
         return left, right
+
+    def _run_dynamic_classifier(self, clf) -> None:
+        """Run LSTM classifier on the current 30-frame deque; emit GestureEvent on hit."""
+        try:
+            label, conf = clf.predict_sequence(self.left_deque, self.right_deque)
+        except Exception as exc:
+            if not self._stop.is_set():
+                print(f'[inference] dynamic classifier error: {exc}', flush=True)
+            return
+
+        if label == GestureLabel.NONE:
+            return
+
+        # Use wrist of whichever hand is present for event coordinates
+        hand_x = hand_y = 0.5
+        last_left = self.left_deque[-1]
+        last_right = self.right_deque[-1]
+        ref = last_left or last_right
+        if ref:
+            hand_x, hand_y = ref[0].x, ref[0].y
+
+        event = GestureEvent(
+            label=label, confidence=conf, timestamp=time.time(),
+            hand_x=hand_x, hand_y=hand_y,
+        )
+        try:
+            self.effects_queue.put_nowait(event)
+        except queue.Full:
+            pass
+        try:
+            self.actions_queue.put_nowait(event)
+        except queue.Full:
+            pass
 
     def stop(self) -> None:
         self._stop.set()
