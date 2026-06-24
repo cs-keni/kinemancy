@@ -72,6 +72,13 @@ class ParticleSystem:
         # Shockwave rings: [{cx, cy, r, life, max_r}, ...]
         self._shockwaves: list[dict] = []
 
+        # Portal: persistent glowing ring + rotating inner vortex (CIRCLE gesture)
+        self._portal_r: float = 0.0          # current radius; 0 = closed
+        self._portal_target_r: float = 0.0  # 120.0 when open, 0.0 when closing
+        self._portal_x: float = 0.0
+        self._portal_y: float = 0.0
+        self._portal_angle: float = 0.0     # vortex rotation accumulator
+
         # Precomputed glow kernel rings for radial soft-disk rendering.
         # Ring 1 (orthogonal, r=1) + Ring 2 (diagonal + r=2) together create
         # a ~5px-wide soft circular disc per particle instead of a pixel cross.
@@ -102,6 +109,22 @@ class ParticleSystem:
         self._arc_history.clear()
         self._shockwaves.clear()
 
+    @property
+    def portal_active(self) -> bool:
+        return self._portal_r > 1.0
+
+    def open_portal(self, x: float, y: float) -> None:
+        """Toggle portal open at (x, y), or close if already open."""
+        if self._portal_target_r > 0.0:
+            self._portal_target_r = 0.0  # already open → close
+        else:
+            self._portal_x = x
+            self._portal_y = y
+            self._portal_target_r = 120.0
+
+    def close_portal(self) -> None:
+        self._portal_target_r = 0.0
+
     def trigger(self, event: GestureEvent) -> None:
         """Handle a one-shot dynamic gesture event from the effects queue."""
         if event.label == GestureLabel.WAVE:
@@ -110,8 +133,13 @@ class ParticleSystem:
             self.spawn_snap_burst(event.hand_x * self._w, event.hand_y * self._h)
         elif event.label == GestureLabel.CLAP:
             self.spawn_shockwave(self._w / 2, self._h / 2)
+        elif event.label == GestureLabel.CIRCLE:
+            self.open_portal(event.hand_x * self._w, event.hand_y * self._h)
+        elif event.label == GestureLabel.THRUST:
+            # Force-push visual: shockwave from hand position
+            self.spawn_shockwave(event.hand_x * self._w, event.hand_y * self._h)
 
-    def spawn_at(self, x: float, y: float, count: int = 20) -> None:
+    def spawn_at(self, x: float, y: float, count: int = 20, brightness: float = 1.0) -> None:
         """Spawn particles at pixel (x, y) with mode-specific physics."""
         if self._mode == ParticleMode.LIGHTNING:
             # Lightning doesn't use SoA particles; collect fingertip positions
@@ -134,13 +162,16 @@ class ParticleSystem:
         self.life[idx] = self._rng.uniform(0.85, 1.0, n).astype(np.float32)
         self.hue[idx] = self._rng.uniform(0.0, 1.0, n).astype(np.float32)
 
+        # Cap brightness multiplier; clamp to 1.0 minimum so decay can't grow
+        b = max(1.0, min(brightness, 3.5))
+
         if self._mode == ParticleMode.FIRE:
             # Mostly upward (−π±π/4) with random speed
             angles = self._rng.uniform(-np.pi * 0.75, -np.pi * 0.25, n)
             speeds = self._rng.uniform(1.5, 5.5, n)
             self.vx[idx] = (np.cos(angles) * speeds).astype(np.float32)
             self.vy[idx] = (np.sin(angles) * speeds).astype(np.float32)
-            self.decay[idx] = self._rng.uniform(0.022, 0.038, n).astype(np.float32)
+            self.decay[idx] = (self._rng.uniform(0.022, 0.038, n) / b).astype(np.float32)
 
         elif self._mode == ParticleMode.WATER:
             # Full upward semicircle; gravity creates the fountain arc
@@ -148,7 +179,7 @@ class ParticleSystem:
             speeds = self._rng.uniform(1.5, 6.0, n)
             self.vx[idx] = (np.cos(angles) * speeds).astype(np.float32)
             self.vy[idx] = (np.sin(angles) * speeds * 0.8).astype(np.float32)
-            self.decay[idx] = self._rng.uniform(0.008, 0.018, n).astype(np.float32)
+            self.decay[idx] = (self._rng.uniform(0.008, 0.018, n) / b).astype(np.float32)
 
         else:  # COSMIC
             # Omnidirectional slow drift
@@ -156,7 +187,7 @@ class ParticleSystem:
             speeds = self._rng.uniform(0.2, 1.2, n)
             self.vx[idx] = (np.cos(angles) * speeds).astype(np.float32)
             self.vy[idx] = (np.sin(angles) * speeds * 0.4).astype(np.float32)
-            self.decay[idx] = self._rng.uniform(0.003, 0.007, n).astype(np.float32)
+            self.decay[idx] = (self._rng.uniform(0.003, 0.007, n) / b).astype(np.float32)
 
         self.active[idx] = True
 
@@ -244,6 +275,14 @@ class ParticleSystem:
             sw['r'] += sw['max_r'] * decay_per_frame
         self._shockwaves = [sw for sw in self._shockwaves if sw['life'] > 0]
 
+        # Portal grow/shrink and vortex rotation
+        if self._portal_r < self._portal_target_r:
+            self._portal_r = min(self._portal_target_r, self._portal_r + 5.0)
+        elif self._portal_r > self._portal_target_r:
+            self._portal_r = max(0.0, self._portal_r - 7.0)
+        if self._portal_r > 1.0:
+            self._portal_angle += 0.045
+
     def render(self, surface: pygame.Surface) -> None:
         """Render particles into pixel buffer and composite onto surface."""
         if self._mode == ParticleMode.COSMIC:
@@ -259,6 +298,8 @@ class ParticleSystem:
 
         for sw in self._shockwaves:
             self._draw_shockwave_ring(sw)
+
+        self._draw_portal_ring()
 
         # Clip in-place then cast to uint8 into pre-allocated buffer
         np.clip(self._pixel_buf, 0.0, 255.0, out=self._pixel_buf)
@@ -438,6 +479,54 @@ class ParticleSystem:
             xs = np.clip((cx + r2 * cos_a).astype(np.int32), 0, self._w - 1)
             ys = np.clip((cy + r2 * sin_a).astype(np.int32), 0, self._h - 1)
             np.add.at(self._pixel_buf, (xs, ys), color)
+
+    def _draw_portal_ring(self) -> None:
+        """Render the persistent portal ring + rotating inner vortex."""
+        r = self._portal_r
+        if r < 2.0:
+            return
+        cx, cy = self._portal_x, self._portal_y
+
+        # Slight breathing pulse (±6%)
+        pulsed_r = r * (1.0 + 0.06 * float(np.sin(self._portal_angle * 5.0)))
+
+        # Glow halo: multiple ring samples at decreasing brightness outward/inward
+        glow_profile = (
+            (0,   1.00), (-1,  0.82), (1,   0.82),
+            (-3,  0.50), (3,   0.50),
+            (-6,  0.22), (6,   0.22),
+            (-10, 0.08), (10,  0.08),
+        )
+        for dr, brightness in glow_profile:
+            ring_r = pulsed_r + dr
+            if ring_r < 1.0:
+                continue
+            color = np.array([0.0, 212.0 * brightness, 255.0 * brightness],
+                             dtype=np.float32)
+            n_pts = max(int(2 * np.pi * ring_r) + 1, 64)
+            a = np.linspace(0, 2 * np.pi, n_pts, endpoint=False)
+            xs = np.clip((cx + ring_r * np.cos(a)).astype(np.int32), 0, self._w - 1)
+            ys = np.clip((cy + ring_r * np.sin(a)).astype(np.int32), 0, self._h - 1)
+            np.add.at(self._pixel_buf, (xs, ys), color)
+
+        # Inner vortex: two counter-rotating rings of 24 dots at 3 radii each
+        n_arms = 24
+        step = 2.0 * np.pi / n_arms
+        for i in range(n_arms):
+            fwd = self._portal_angle + i * step      # outer ring rotates forward
+            bwd = -self._portal_angle * 1.4 + i * step  # inner ring counter-rotates
+            for angle, frac, bright in (
+                (fwd, 0.62, 1.0),
+                (bwd, 0.38, 0.65),
+                (fwd, 0.16, 0.35),
+            ):
+                arm_r = pulsed_r * frac
+                ix = int(cx + arm_r * np.cos(angle))
+                iy = int(cy + arm_r * np.sin(angle))
+                if 0 <= ix < self._w and 0 <= iy < self._h:
+                    self._pixel_buf[ix, iy] += np.array(
+                        [0.0, 190.0 * bright, 255.0 * bright], dtype=np.float32
+                    )
 
     def _draw_segment(
         self, x0: int, y0: int, x1: int, y1: int, color: np.ndarray

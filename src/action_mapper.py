@@ -4,8 +4,8 @@ Handles discrete one-shot events from actions_queue:
   snap        → media next track
   swipe_left  → previous virtual desktop (Win+Ctrl+Left)
   swipe_right → next virtual desktop (Win+Ctrl+Right)
-  thrust      → scatter windows  (Phase H stub)
-  clap        → pull windows     (Phase H stub)
+  thrust      → scatter windows (WindowManager)
+  clap        → pull windows   (WindowManager)
   wave/circle → effect only (particle system handles via effects_queue)
 
 Static gesture actions (FIST mute, THUMBS_UP volume, PEACE prev-track) are
@@ -14,14 +14,13 @@ here because they need per-frame landmark state for cursor tracking anyway.
 """
 from __future__ import annotations
 
-import time
-
 from src.constants import GestureEvent, GestureLabel
 
 
 class ActionMapper:
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: dict, window_mgr=None) -> None:
         self._bindings: dict = config.get("gesture_bindings", {})
+        self._window_mgr = window_mgr
 
         from pynput import keyboard as _kb
         self._kb = _kb.Controller()
@@ -39,8 +38,10 @@ class ActionMapper:
                 self._media(action)
             elif action_type == "system":
                 self._system(action)
-            elif action_type in ("effect", "window", "cursor"):
-                pass  # effect = particle system; window/cursor handled elsewhere
+            elif action_type == "window":
+                self._window(action)
+            elif action_type in ("effect", "cursor"):
+                pass  # effect = particle system; cursor handled on main thread
         except Exception as exc:
             print(f"[action] {name} → {action}: {exc}", flush=True)
 
@@ -56,6 +57,14 @@ class ActionMapper:
             k = key_map[action]
             self._kb.press(k)
             self._kb.release(k)
+
+    def _window(self, action: str) -> None:
+        if self._window_mgr is None:
+            return
+        if action == "scatter_windows":
+            self._window_mgr.scatter_windows()
+        elif action == "pull_windows":
+            self._window_mgr.pull_windows()
 
     def _system(self, action: str) -> None:
         Key = self._Key

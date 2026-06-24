@@ -1,5 +1,32 @@
 # Engineering Log
 
+## 2026-06-23 — Phase H: Advanced Effects
+
+**Author**: Claude (Sonnet 4.6)
+
+### Changes
+- Updated `src/particles.py` — portal state + open/close/trigger/render, THRUST shockwave, `brightness` param in `spawn_at()`
+- Created `src/window_manager.py` — WindowManager for Force Push / Force Pull (win32gui EnumWindows)
+- Updated `src/action_mapper.py` — `_window()` handler routes scatter/pull to WindowManager; accepts `window_mgr` arg
+- Updated `src/dispatcher.py` — forwards `window_mgr` to ActionMapper
+- Updated `main.py` — WindowManager creation, speed→brightness tracking, trail persistence deque, FIST→portal close, `P`/`T`/`Y` test keys
+
+### Architecture
+
+**Portal (CIRCLE gesture)**
+`ParticleSystem.open_portal(x, y)` toggles the portal (open on first CIRCLE, close on second or FIST). The portal is driven by two state variables: `_portal_r` (current radius, animated) and `_portal_target_r` (120.0 when open, 0.0 when closing). `update()` grows/shrinks `_portal_r` at 5px/frame open, 7px/frame close. `_draw_portal_ring()` renders 9 concentric ring samples in teal/cyan (#00d4ff) with a brightness falloff profile, plus 24-arm rotating vortex dots at 3 radii. Breathing pulse: `pulsed_r = r * (1 + 0.06 * sin(angle * 5))`. Main loop checks FIST while `particles.portal_active` → calls `close_portal()` and suppresses the mute action.
+
+**Force Push / Pull (THRUST / CLAP)**
+`WindowManager._visible_windows()` runs `win32gui.EnumWindows()` filtering out: the overlay hwnd, invisible, minimized, no-title, WS_EX_TOOLWINDOW, and sub-80px windows. `scatter_windows()` saves `(x, y, w, h)` for each window and calls `MoveWindow` to push 380px outward from screen centre (clamped so windows stay partially on-screen). `pull_windows()` restores saved positions. Windows with no saved positions are silently skipped. Graceful no-op when pywin32 is absent. THRUST also fires a shockwave from the hand position via `particles.trigger()`; CLAP fires shockwave from screen centre (already wired in Phase C).
+
+**Speed → Brightness**
+Every frame, wrist landmark velocity is computed as `hypot(Δx, Δy)` in pixel space (normalized coords × win_w/h). `brightness = 1.0 + clamp(avg_px_vel / 40.0, 0, 2.5)` → cap 3.5× in `spawn_at()`. Decay is divided by brightness: faster hands → slower decay → particles stay bright longer. Resting hands give brightness=1.0 (unchanged behaviour).
+
+**Trail Persistence**
+`collections.deque(maxlen=5)` of extended-fingertip positions, appended every frame (empty when no fingers are extended or landmarks are absent). Drawn before landmark dots (so skeleton overlays the trail). Color `(99t, 102t, 241t)` fades to `(0,0,0)` which is transparent in the overlay.
+
+---
+
 ## 2026-06-23 — Phase G: OS Action Integration
 
 **Author**: Claude (Sonnet 4.6)

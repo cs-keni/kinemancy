@@ -255,13 +255,28 @@ Wire gesture events to real OS actions via Thread 4.
 
 The showstopper demos.
 
-- [ ] **Snap burst**: 200 radial particles from snapping hand position on snap detection
-- [ ] **Clap shockwave**: expanding ring geometry (no particles) from screen center on clap
-- [ ] **Portal**: glowing ring at circle centroid + swirling inner vortex; persists until fist
-- [ ] **Force Push**: enumerate all visible windows (`win32gui.EnumWindows`), save positions, animate outward on thrust
-- [ ] **Force Pull**: animate windows back to saved positions on clap (when not in Force Push cooldown)
-- [ ] Speed → brightness: hand velocity (landmark delta between frames) → particle brightness multiplier
-- [ ] Trail persistence: fading smear of last 5 fingertip positions (alpha decay)
+- [x] **Snap burst**: 200 radial particles from snapping hand position on snap detection
+- [x] **Clap shockwave**: expanding ring geometry (no particles) from screen center on clap
+- [x] **Portal**: glowing ring at circle centroid + swirling inner vortex; persists until fist
+  - CIRCLE gesture → `open_portal(x, y)` (toggle: second CIRCLE closes)
+  - `close_portal()` wired to FIST when `particles.portal_active`
+  - FIST consumed by portal close; mute toggle is suppressed while portal is active
+  - Rendering: 9-layer glow halo in teal/cyan (#00d4ff) + 24-arm counter-rotating vortex at 3 radii
+  - Breathing pulse: ±6% size oscillation driven by `portal_angle`
+  - `P` key → manual test; portal grows to 120px over ~24 frames, shrinks in ~17 frames on close
+- [x] **Force Push**: enumerate all visible windows (`win32gui.EnumWindows`), save positions, scatter outward from screen centre on THRUST (`T` key for manual test)
+  - `src/window_manager.py`: `WindowManager.scatter_windows()` / `pull_windows()`
+  - Filters: visible, non-minimized, non-toolwindow, w×h ≥ 80px, excludes overlay hwnd
+  - Push = 380px outward, clamped to keep window partially on-screen
+  - THRUST also fires shockwave from hand position via `particles.trigger()`
+- [x] **Force Pull**: animate windows back to saved positions on CLAP (`Y` key for manual test)
+  - CLAP → `pull_windows()` (ActionMapper) + shockwave from screen center (ParticleSystem.trigger)
+- [x] **Speed → brightness**: hand velocity (wrist landmark delta between consecutive frames) → `brightness` arg in `spawn_at()`
+  - `brightness = 1.0 + clamp(avg_px_velocity / 40.0, 0, 2.5)` → decay divided by brightness → longer-lived particles
+- [x] **Trail persistence**: fading smear of last 5 extended-fingertip positions (alpha decay)
+  - Deque(maxlen=5) of tip lists, appended every frame (empty when no extended fingers)
+  - Drawn as indigo circles fading to black (black = transparent in overlay)
+  - `t = 1 - age/5`; radius = `max(1, int(4*t))`; color = `(99t, 102t, 241t)`
 
 **Done when:** all six demo scenarios (Wizard, Minority Report, Conductor, Elemental, Portal, Force Push) are fully demo-able.
 
