@@ -3,6 +3,8 @@
     "snap":        { "type": "media",  "action": "next_track" },
     "wave":        { "type": "effect", "action": "cycle_mode" },
     "fist":        { "type": "system", "action": "mute_toggle" },
+    "peace":       { "type": "media",  "action": "prev_track" },
+    "thumbs_up":   { "type": "media",  "action": "volume_up" },
     "thrust":      { "type": "window", "action": "scatter_windows" },
     "clap":        { "type": "window", "action": "pull_windows" },
     "circle":      { "type": "effect", "action": "open_portal" },

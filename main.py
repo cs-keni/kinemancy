@@ -25,6 +25,7 @@ import win32gui
 from src.bootstrap_classifier import BootstrapClassifier
 from src.capture import CaptureThread
 from src.config_loader import load_config
+from src.cursor_controller import CursorController
 from src.dispatcher import DispatcherThread
 from src.inference import InferenceThread
 from src.particles import ParticleSystem
@@ -123,20 +124,23 @@ def main(argv: list[str] | None = None) -> int:
 
     pygame.init()
 
+    info = pygame.display.Info()
+    screen_w, screen_h = info.current_w, info.current_h
+
     if args.preview:
         win_w, win_h = 640, 480
         screen = pygame.display.set_mode((win_w, win_h))
         pygame.display.set_caption("Kinemancy Preview")
         # No pywin32 overlay in preview mode
     else:
-        info = pygame.display.Info()
-        win_w, win_h = info.current_w, info.current_h
+        win_w, win_h = screen_w, screen_h
         screen = pygame.display.set_mode((win_w, win_h), pygame.NOFRAME)
         pygame.display.set_caption("Kinemancy")
         hwnd = pygame.display.get_wm_info()["window"]
         _setup_overlay(hwnd, win_w, win_h)
 
     particles = ParticleSystem(win_w, win_h, no_flash=config.get("no_flash", False))
+    cursor_ctrl = CursorController(screen_w, screen_h)
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("monospace", 14)
 
@@ -147,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         effects_queue,
         actions_queue,
     )
-    dispatcher = DispatcherThread(actions_queue)
+    dispatcher = DispatcherThread(actions_queue, config)
 
     if config.get("dynamic_classifier", "none") == "trained":
         try:
@@ -216,10 +220,15 @@ def main(argv: list[str] | None = None) -> int:
                             py = hand[tip_idx].y * win_h
                             particles.spawn_at(px, py, count=3)
 
+            # Cursor control + static gesture OS actions (POINT/PINCH/FIST/etc.)
+            gesture_result = inference.get_gesture()
+            cursor_ctrl.update(gesture_result, landmarks, win_w, win_h)
+
             if capture.reconnect_event.is_set():
                 _draw_reconnect_banner(screen, font, win_w, win_h)
             elif landmarks:
                 _draw_landmarks(screen, landmarks, win_w, win_h)
+                cursor_ctrl.draw_indicator(screen, landmarks, win_w, win_h)
 
             particles.update()
             particles.render(screen)

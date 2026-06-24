@@ -1,5 +1,38 @@
 # Engineering Log
 
+## 2026-06-23 — Phase G: OS Action Integration
+
+**Author**: Claude (Sonnet 4.6)
+
+### Changes
+- Created `src/action_mapper.py` — dynamic gesture → OS action (dispatcher thread)
+- Created `src/cursor_controller.py` — cursor mode + static gesture OS actions (main thread)
+- Updated `src/dispatcher.py` — wired ActionMapper, accepts config dict
+- Updated `main.py` — CursorController instantiation, per-frame update + draw_indicator
+- Updated `config/actions.json` — added peace → prev_track, thumbs_up → volume_up
+
+### Architecture
+**ActionMapper (DispatcherThread):** handles discrete dynamic gesture events from the
+actions_queue. Snap → media_next, swipe_left/right → Win+Ctrl+Left/Right, thrust/clap
+stubbed for Phase H. wave/circle are effect-only (particle system).
+
+**CursorController (main thread):** per-frame polling of `inference.get_gesture()`:
+- POINT → EMA-smoothed index fingertip (landmark 8) → mouse position (screen coords)
+- PINCH proximity (index+thumb normalized dist < 0.04, hysteresis at 0.06) → left click
+- FIST → mute toggle (pycaw preferred, media_volume_mute fallback); 1s cooldown
+- THUMBS_UP → +10% volume (pycaw preferred, 5× media_volume_up fallback); 1s cooldown
+- PEACE → prev_track media key; 1s cooldown
+- draw_indicator(): pulsing amber ring (14±4px @ 5Hz sin) around index fingertip; turns
+  orange when pinch_down
+
+### Split design rationale
+Dynamic gestures go through the queue because they're one-shot events with well-defined
+timing (LSTM 800ms cooldown). Static gestures are continuous poses that need per-frame
+landmark data (cursor position, pinch distance) — polling in the main thread is correct.
+pycaw initialized lazily in CursorController.__init__; fails gracefully on non-Windows.
+
+---
+
 ## 2026-06-23 — Phase G.5: Portrait Window Art Mode
 
 **Author**: Claude (Sonnet 4.6)

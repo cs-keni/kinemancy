@@ -234,17 +234,18 @@ Standalone OpenCV script — live webcam through a two-hand framed art window.
 
 Wire gesture events to real OS actions via Thread 4.
 
-- [ ] Implement `ActionMapper` reading from `config/actions.json`
-- [ ] Wire Thread 4 (OS Dispatcher) to consume `Queue[GestureEvent]` → call `ActionMapper.dispatch()`
-  - Catch `pywinerror` from `win32gui.MoveWindow()` → log + skip window, continue
-- [ ] Wire: snap → next track (pynput media key)
-- [ ] Wire: fist → mute toggle (pycaw)
-- [ ] Wire: point → cursor control (index fingertip → screen coords, exponential moving average smoothing)
-- [ ] Wire: pinch → left click (pynput, when index+thumb landmark distance < threshold)
-- [ ] Wire: peace → previous track
-- [ ] Wire: thumbs_up → volume up (pycaw)
-- [ ] Wire: swipe_left/right → previous/next virtual desktop (Win+Ctrl+Left/Right via pynput)
-- [ ] Visual indicator when cursor mode is active (subtle ring around index fingertip)
+- [x] Implement `ActionMapper` (`src/action_mapper.py`) reading from `config/actions.json`
+- [x] Wire DispatcherThread to consume `Queue[GestureEvent]` → `ActionMapper.dispatch()`
+- [x] Wire: snap → next track (pynput media key)
+- [x] Wire: fist → mute toggle (pycaw with fallback to media_volume_mute)
+- [x] Wire: point → cursor control (index fingertip → screen coords, EMA smoothing)
+- [x] Wire: pinch → left click (index+thumb landmark proximity with hysteresis)
+- [x] Wire: peace → previous track (pynput media key)
+- [x] Wire: thumbs_up → volume up (pycaw +10%, fallback 5× media_volume_up)
+- [x] Wire: swipe_left/right → previous/next virtual desktop (Win+Ctrl+Left/Right)
+- [x] Visual indicator: pulsing amber ring around index fingertip in cursor mode
+- [ ] thrust/clap → scatter/pull windows (Phase H — win32gui EnumWindows)
+- [ ] **Run and verify:** `python main.py` — test each gesture triggers expected OS action
 
 **Done when:** Minority Report demo works — cursor control and click purely by gesture.
 
